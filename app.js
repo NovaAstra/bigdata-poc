@@ -26,7 +26,7 @@ class Heap {
     this.#_validate()
 
     const min = this.heap.shift();
-    this.items.unshift(this.heap.pop());
+    this.heap.unshift(this.heap.pop());
 
     this.#_heapifyDown();
     return min;
@@ -40,14 +40,51 @@ class Heap {
   #_heapifyUp() {
     let index = this.sizes - 1
 
+    while (this.#_comparator(this.#_getParent(index), this.heap[index])) {
+      this.#_swap(index, this.#_getParentIndex(index))
+      index = this.#_getParentIndex(index)
+    }
   }
 
   #_heapifyDown() {
+    let index = 0
+  }
 
+  #_getParent() {
+    return this.heap[this.#_getParentIndex(index)]
+  }
+
+  #_hasParent() {
+    const parentIndex = this.getParentIndex(index);
+    return parentIndex < this.sizes && parentIndex !== -1;
   }
 
   #_getParentIndex(childIndex) {
     return Math.floor((childIndex - 1) / 2.0);
+  }
+
+  #_getLeftChildIndex(parentIndex) {
+    return (2 * parentIndex) + 1;
+  }
+
+  #_hasLeftChild() {
+    return this.#_getLeftChildIndex()
+  }
+
+  #_getLeftChild(index) {
+    return this.heap[this.getLeftChildIndex(index)];
+  }
+
+  #_getRightChildIndex(parentIndex) {
+    return (2 * parentIndex) + 2;
+  }
+
+  #_hasRightChild() {
+    return this.#_getRightChildIndex()
+  }
+
+  #_getRightChild(index) {
+    return this.heap[this.#_getRightChildIndex(index)];
   }
 
   #_validate() {
@@ -57,7 +94,7 @@ class Heap {
   }
 
   #_swap(indexA, indexB) {
-    [this.items[indexA], this.items[indexB]] = [this.items[indexB], this.items[indexA]];
+    [this.heap[indexA], this.heap[indexB]] = [this.heap[indexB], this.heap[indexA]];
   }
 
   #_print() {
