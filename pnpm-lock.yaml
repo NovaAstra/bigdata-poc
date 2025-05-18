@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      nanoid:
+        specifier: ^5.1.5
+        version: 5.1.5
     devDependencies:
       parcel:
         specifier: ^2.15.1
@@ -711,6 +715,11 @@ packages:
 
   msgpackr@1.11.3:
     resolution: {integrity: sha512-mNdO4s/W54QCghwGNSqO5ULVJ6QUimP/1hRlWVx5f7frTLaClg+4sBRjUTgP1OrBRgVtkH1tI9vi4Dqg/JX3Kg==}
+
+  nanoid@5.1.5:
+    resolution: {integrity: sha512-Ir/+ZpE9fDsNH0hQ3C68uyThDXzYcim2EqcZ8zn8Chtt1iylPT9xXJB0kPCnqzgcEGikO9RxSrh63MsmVCU7Fw==}
+    engines: {node: ^18 || >=20}
+    hasBin: true
 
   node-addon-api@6.1.0:
     resolution: {integrity: sha512-+eawOlIgy680F0kBzPUNFhMZGtJ1YmqM6l4+Crf4IkImjYrO/mqPwRMh352g23uIaQKFItcQ64I7KMaJxHgAVA==}
@@ -1706,6 +1715,8 @@ snapshots:
   msgpackr@1.11.3:
     optionalDependencies:
       msgpackr-extract: 3.0.3
+
+  nanoid@5.1.5: {}
 
   node-addon-api@6.1.0: {}
 

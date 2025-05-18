@@ -3,10 +3,13 @@
   "version": "0.0.1",
   "source": "index.html",
   "scripts": {
-    "start": "parcel",
+    "start": "parcel index.html",
     "build": "parcel build"
   },
   "devDependencies": {
     "parcel": "^2.15.1"
+  },
+  "dependencies": {
+    "nanoid": "^5.1.5"
   }
 }
