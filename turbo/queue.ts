@@ -1,7 +1,7 @@
 import { TaskStatus } from "./enums";
 import { type Task } from "./types";
 
-export class Queue<P, R> {
+export class Queue<P = any, R = any> {
   private list: Task<P, R>[] = [];
 
   public get length() {

@@ -24,7 +24,7 @@ export interface WorkerMessage<P> {
 }
 
 
-export class Agent<P, R> {
+export class Agent<P = any, R= any> {
   public readonly id: string = nanoid()
 
   private isTerminated: boolean = false;
@@ -34,7 +34,7 @@ export class Agent<P, R> {
   private startTime: number;
   private lastUpdateTime: number;
 
-  constructor(private readonly worker: Worker, private readonly logger: Logger) {
+  constructor(private readonly worker: Worker) {
     this.startTime = Date.now();
     this.lastUpdateTime = this.startTime;
 

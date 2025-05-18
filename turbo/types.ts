@@ -1,5 +1,7 @@
 import { TaskStatus } from "./enums";
 
+export type ScriptURL = string | URL | (() => string);
+
 export enum TaskPriority {
   LOW = 0,
   NORMAL = 1,
