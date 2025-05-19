@@ -2,8 +2,9 @@
   "name": "bigdata-poc",
   "version": "0.0.1",
   "source": "index.html",
+  "type": "module",
   "scripts": {
-    "start": "parcel index.html",
+    "start": "parcel serve",
     "build": "parcel build"
   },
   "devDependencies": {
