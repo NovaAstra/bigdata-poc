@@ -113,7 +113,7 @@ export class Cluster<P = any, R = any> {
       throw new Error('Web Workers are not supported in this environment.');
     }
 
-    if (typeof this.options.maxConcurrency !== 'number') {
+    if (typeof this.options.maxConcurrency !== 'number' || this.options.maxConcurrency < 0) {
       throw new Error('maxConcurrency must be of number type');
     }
 
