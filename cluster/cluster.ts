@@ -76,6 +76,8 @@ export class Cluster<P = any, R = any> {
 
   private lastLaunchedWorkerTime: number = 0;
 
+  private closed: boolean = false;
+
   public constructor(options: ClusterOptionsArgument) {
     this.options = {
       ...DEFAULT_OPTIONS,
