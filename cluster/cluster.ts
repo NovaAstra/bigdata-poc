@@ -100,7 +100,17 @@ export class Cluster<P = any, R = any> {
   private async bootstrap() {
     if (this.initialized) return;
 
+    if (!isWorkerSupported()) {
+      throw new Error('Web Workers are not supported in this environment.');
+    }
+
+    if (typeof this.options.maxConcurrency !== 'number') {
+      throw new Error('maxConcurrency must be of number type');
+    }
+
     this.checkForWorkInterval = setInterval(() => this.work(), CHECK_FOR_WORK_INTERVAL);
+
+    this.initialized = true
   }
 
   private async work() {
@@ -163,14 +173,7 @@ export class Cluster<P = any, R = any> {
     this.workersStarting += 1
     this.lastLaunchedWorkerTime = Date.now();
 
-    let worker: Worker;
-    try {
-      worker = new ((window as any).Worker)()
-    } catch (error) {
-      throw new Error(`Unable to launch web worker, error message: ${error.message}`);
-    }
-
-    const bot = new Bot()
+    const bot = new Bot({} as any)
     this.workersStarting -= 1;
 
     this.workersAvail.push(bot);

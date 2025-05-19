@@ -17,3 +17,13 @@ export enum TaskPriority {
 export enum LogLevel {
 
 }
+
+export enum MessageType {
+  TASK,
+  COMPLETED,
+  ERROR,
+  PROGRESS,
+  TERMINATE,
+  PING,
+  PONG
+}
