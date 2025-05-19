@@ -9,6 +9,9 @@ export interface ClusterOptions {
   workerCreationDelay: number;
   debug: boolean;
   workerOptions: WorkerOptions;
+  timeout: number;
+  retryLimit: number;
+  retryDelay: number;
 }
 
 export type ClusterOptionsArgument = Partial<ClusterOptions>;
@@ -42,6 +45,9 @@ const DEFAULT_OPTIONS: ClusterOptions = {
   workerCreationDelay: 0,
   debug: false,
   workerOptions: {},
+  timeout: 30 * 1000,
+  retryLimit: 0,
+  retryDelay: 0,
 }
 
 export class Cluster<P = any, R = any> {
@@ -56,7 +62,7 @@ export class Cluster<P = any, R = any> {
 
   private initialized: boolean = false;
   private allTargetCount: number = 0
-  private readonly jobQueue: Queue<any> = new Queue()
+  private readonly jobQueue: Queue<any, any> = new Queue()
 
   private workers: Bot<P, R>[] = [];
   private workersAvail: Bot<P, R>[] = [];
@@ -88,6 +94,7 @@ export class Cluster<P = any, R = any> {
         resolve,
         reject,
         transferables: options?.transferables,
+        timeout: options?.timeout ?? this.options.timeout,
       }
 
       this.jobQueue.push(task);
@@ -155,7 +162,7 @@ export class Cluster<P = any, R = any> {
       return;
     }
 
-    const worker = this.workersAvail.shift() as Bot<any, any>;
+    const worker = this.workersAvail.shift()!;
     this.workersBusy.push(worker);
 
     const result = await worker.handle(job);
@@ -173,11 +180,12 @@ export class Cluster<P = any, R = any> {
     this.workersStarting += 1
     this.lastLaunchedWorkerTime = Date.now();
 
-    const bot = new Bot({} as any)
-    this.workersStarting -= 1;
+    const bot = new Bot<P, R>({ id: nanoid(), cluster: this, worker: new Worker(this.options.scriptURL as string) });
 
     this.workersAvail.push(bot);
     this.workers.push(bot);
+
+    this.workersStarting -= 1;
   }
 
   private allowedToStartWorker() {

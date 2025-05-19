@@ -10,6 +10,7 @@ export interface Task<P, R> {
   resolve: (result: R) => void;
   reject: (error: Error) => void;
   transferables?: Transferable[];
+  timeout?: number;
 }
 
 export interface TaskOptions {
@@ -17,6 +18,7 @@ export interface TaskOptions {
   scriptURL?: ScriptURL;
   priority?: TaskPriority;
   retries?: number;
+  timeout?: number;
   transferables?: Transferable[];
   abortSignal?: AbortSignal;
 }
