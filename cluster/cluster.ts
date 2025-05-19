@@ -54,7 +54,6 @@ export class Cluster<P = any, R = any> {
   public static async launch(options: ClusterOptionsArgument) {
     const cluster = new Cluster(options);
     await cluster.bootstrap();
-
     return cluster;
   }
 
@@ -64,8 +63,8 @@ export class Cluster<P = any, R = any> {
   private allTargetCount: number = 0
   private readonly jobQueue: Queue<any, any> = new Queue()
 
-  private workers: Bot<P, R>[] = [];
-  private workersAvail: Bot<P, R>[] = [];
+  private agents: Bot<P, R>[] = [];
+  private agentsAvail: Bot<P, R>[] = [];
   private workersBusy: Bot<P, R>[] = [];
   private workersStarting: number = 0;
 
@@ -93,6 +92,7 @@ export class Cluster<P = any, R = any> {
         id: options?.id ?? nanoid(),
         payload,
         retries: 0,
+        scriptURL: createScriptURL(options.scriptURL || this.options.scriptURL),
         resolve,
         reject,
         transferables: options?.transferables,
@@ -150,7 +150,7 @@ export class Cluster<P = any, R = any> {
       return;
     }
 
-    if (this.workersAvail.length === 0) {
+    if (this.agentsAvail.length === 0) {
       if (this.allowedToStartWorker()) {
         await this.launchWorker();
         this.work()
@@ -164,16 +164,16 @@ export class Cluster<P = any, R = any> {
       return;
     }
 
-    const worker = this.workersAvail.shift()!;
+    const worker = this.agentsAvail.shift()!;
     this.workersBusy.push(worker);
 
     const result = await worker.handle(job);
 
-    // add worker to available workers again
+    // add worker to available agents again
     const workerIndex = this.workersBusy.indexOf(worker);
     this.workersBusy.splice(workerIndex, 1);
 
-    this.workersAvail.push(worker);
+    this.agentsAvail.push(worker);
 
     this.work()
   }
@@ -182,16 +182,20 @@ export class Cluster<P = any, R = any> {
     this.workersStarting += 1
     this.lastLaunchedWorkerTime = Date.now();
 
-    const bot = new Bot<P, R>({ id: nanoid(), cluster: this, worker: new Worker(this.options.scriptURL as string) });
+    const bot = new Bot<P, R>({
+      id: nanoid(),
+      cluster: this,
+      worker: new Worker(this.options.scriptURL as string)
+    });
 
-    this.workersAvail.push(bot);
-    this.workers.push(bot);
+    this.agentsAvail.push(bot);
+    this.agents.push(bot);
 
     this.workersStarting -= 1;
   }
 
   private allowedToStartWorker() {
-    const workerCount = this.workers.length + this.workersStarting;
+    const workerCount = this.agents.length + this.workersStarting;
     return (
       this.options.maxConcurrency === 0
       || workerCount < this.options.maxConcurrency)

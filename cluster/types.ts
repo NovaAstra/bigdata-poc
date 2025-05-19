@@ -6,6 +6,7 @@ export interface Task<P, R> {
   id: string;
   payload: P;
   retries: number;
+  scriptURL: URL;
   abortController?: AbortController;
   resolve: (result: R) => void;
   reject: (error: Error) => void;
