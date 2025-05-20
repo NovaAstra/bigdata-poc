@@ -2,10 +2,28 @@ import { Cluster } from "./cluster";
 
 async function bootstrap() {
   const cluster = await Cluster.launch();
-  console.log(1212)
 
- const a =  await cluster.queue(30, { scriptURL: () => `self.onmessage=e=>postMessage(e.data)` })
- console.log(a)
+  const a1 = await cluster.queue(30, {
+    scriptURL: (data) => {
+      return data
+    }
+  })
+  const a2 = await cluster.queue(30, {
+    scriptURL: (data) => {
+      return data
+    }
+  })
+  const a3 = await cluster.queue(30, {
+    scriptURL: (data) => {
+      return data
+    }
+  })
+  const a4 = await cluster.queue(30, {
+    scriptURL: (data) => {
+      return data
+    }
+  })
+  console.log(a1,a2,a3,a4)
 }
 
 bootstrap()

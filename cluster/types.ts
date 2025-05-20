@@ -1,6 +1,6 @@
 import { TaskPriority } from "./enums";
 
-export type ScriptURL = string | URL | (() => string);
+export type ScriptURL = string | URL | ((input: any) => string);
 
 export interface Task<P, R> {
   id: string;

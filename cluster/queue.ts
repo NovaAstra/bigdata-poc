@@ -15,6 +15,10 @@ export class Queue<P, R> {
     return this.list.shift();
   }
 
+  public peak(): Task<P, R> | undefined {
+    return this.list[0]
+  }
+
   public unshift(...items: Task<P, R>[]): void {
     this.list.unshift(...items)
   }

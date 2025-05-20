@@ -2,6 +2,7 @@ import { type ScriptURL, type Task, TaskOptions } from "./types"
 import { Worker } from "./worker";
 import { Queue } from "./queue";
 import { nanoid } from "nanoid";
+import { MessageType } from "./enums";
 
 export interface ClusterOptions {
   scriptURL: ScriptURL;
@@ -21,6 +22,41 @@ export type ClusterOptionsArgument = Partial<ClusterOptions>;
 export const isWorkerSupported = () =>
   typeof window !== 'undefined' && typeof Worker !== 'undefined';
 
+export const createScriptCode = <P, R>(
+  callback: (payload: P) => R | Promise<R>,
+  { transferable = false, id }: WorkerOptions = {}
+): string => {
+  const callbackFunction = callback.toString();
+  const messageTypeString = JSON.stringify(MessageType);
+
+  return `
+    (function() {
+      'use strict';
+      
+      const callback = ${callbackFunction};
+      const MessageType = ${messageTypeString};
+
+      self.onmessage = async function(ev) {
+        try {
+          const result = await Promise.resolve(callback(ev.data));
+          
+          self.postMessage({
+            type: MessageType.COMPLETED,
+            payload: result,
+            id: ev.data.id
+          }, ${transferable} && result instanceof ArrayBuffer ? [result] : []);
+        } catch (error) {
+          self.postMessage({
+            type: MessageType.ERROR,
+            error: error,
+            id: ev.data.id
+          });
+        }
+      };
+    })();
+  `;
+};
+
 export const createScriptURL = (scriptURL: ScriptURL): URL => {
   if (typeof scriptURL === 'string')
     return new URL(scriptURL, window.location.href);
@@ -29,12 +65,17 @@ export const createScriptURL = (scriptURL: ScriptURL): URL => {
     return scriptURL;
 
   if (typeof scriptURL === 'function') {
-    const code = scriptURL();
+    const code = createScriptCode(scriptURL);
     const blob = new Blob([code], { type: 'application/javascript' });
     return URL.createObjectURL(blob) as unknown as URL;
   }
 
   throw new TypeError(`Invalid script format. Expected string, URL or function, but got: ${typeof scriptURL}`);
+}
+
+interface WorkerOptions {
+  transferable?: boolean;
+  id?: string;
 }
 
 export class WorkerPool<K, V> {
@@ -45,20 +86,14 @@ export class WorkerPool<K, V> {
       .reduce((total, resource) => total + resource.length, 0);
   }
 
-  public push(key: K, resources: V): void {
-    if (!this.pool.has(key)) {
-      this.pool.set(key, []);
-    }
-    this.pool.get(key)!.push(resources);
+  public push(key: K, resource: V): void {
+    if (!this.pool.has(key)) this.pool.set(key, []);
+    this.pool.get(key)!.push(resource);
   }
 
   public shift(key: K): V | undefined {
     const workers = this.pool.get(key);
-
-    if (workers && workers.length > 0) {
-      return workers.shift();
-    }
-    return undefined
+    return workers?.shift();
   }
 
   public remove(resource: V): boolean {
@@ -79,13 +114,16 @@ export class WorkerPool<K, V> {
     this.pool.clear();
   }
 
-  public has(resource: V): boolean {
-    for (const resources of this.pool.values()) {
-      if (resources.includes(resource)) {
-        return true;
-      }
-    }
-    return false;
+  public hasResource(resource: V): boolean {
+    return Array.from(this.pool.values()).some(resources => resources.includes(resource));
+  }
+
+  public hasKey(key: K): boolean {
+    return this.pool.has(key);
+  }
+
+  public getResources(key: K): V[] {
+    return this.pool.get(key)
   }
 
   public map<U>(
@@ -99,23 +137,14 @@ export class WorkerPool<K, V> {
     return result;
   }
 
-  public forEach(
-    callback: (resource: V, key: K, pool: WorkerPool<K, V>) => void,
-    thisArg?: any
-  ): void {
+  public forEach(callback: (resource: V, key: K, pool: WorkerPool<K, V>) => void, thisArg?: any): void {
     for (const [key, resources] of this.pool.entries()) {
-      for (const resource of resources) {
-        callback.call(thisArg, resource, key, this);
-      }
+      resources.forEach(resource => callback.call(thisArg, resource, key, this));
     }
   }
 
   public toArray(): V[] {
-    const result: V[] = [];
-    for (const resources of this.pool.values()) {
-      result.push(...resources);
-    }
-    return result;
+    return Array.from(this.pool.values()).flat();
   }
 }
 
@@ -241,8 +270,8 @@ export class Cluster<P = any, R = any> {
       return;
     }
 
-    const job = this.jobQueue.shift();
-    if (job === undefined) {
+    const next = this.jobQueue.peak();
+    if (next === undefined) {
       // skip, there are items in the jobQueue but they are all delayed
       return;
     }
@@ -250,23 +279,19 @@ export class Cluster<P = any, R = any> {
 
     if (this.workerAvailPool.size === 0) { // no workers available
       if (this.allowedToStartWorker()) {
-        await this.launchWorker(job);
-        this.jobQueue.unshift(job)
-        console.log(this.workCallTimeout)
+        await this.launchWorker(next);
         this.work()
       }
       return;
     }
 
-
+    const job = this.jobQueue.shift()!;
     const worker = this.workerAvailPool.shift(job.scriptURL)!;
     this.workerBusyPool.push(job.scriptURL, worker);
 
     if (this.workerAvailPool.size !== 0 || this.allowedToStartWorker()) {
       this.work()
     }
-
-
 
     const result = await worker.handle(job);
 
@@ -291,13 +316,12 @@ export class Cluster<P = any, R = any> {
     this.workerAvailPool.push(job.scriptURL, worker);
     this.workerPool.push(job.scriptURL, worker);
 
-    console.log(this.workerPool)
-
     this.workersStarting -= 1;
   }
 
   private allowedToStartWorker() {
     const workerCount = this.workerPool.size + this.workersStarting;
+
     return (
       this.options.maxConcurrency === 0
       || workerCount < this.options.maxConcurrency)

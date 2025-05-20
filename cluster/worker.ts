@@ -28,51 +28,43 @@ export const timeoutExecute = async <T>(millis: number, promise: Promise<T>): Pr
 
 export type WebWorker = globalThis.Worker
 
-export interface BotOptions {
+export interface WorkerOptions {
   id: string;
   cluster: Cluster;
   worker: WebWorker;
 }
 
-export interface BotMessage<P> {
-  id?: string;
+export interface WorkerMessage<P, R> {
+  id: string;
   type: MessageType;
-  payload?: P;
-  error?: Error
+  payload?: P | R;
+  error?: Error;
+  progress?: number;
 }
 
-export class Worker<P, R> implements BotOptions {
+export class Worker<P, R> implements WorkerOptions {
   public readonly id: string;
-
   public readonly worker: WebWorker;
   public readonly cluster: Cluster;
 
   public closed: boolean = false
 
-  private currentTask: Task<P, R>;
+  private currentTask: Task<P, R> | null = null;
 
   private startTime: number;
-  private lastUpdateTime: number;
+  private lastUsed: number;
 
-  private idleTimeoutId: number;
+  private idleTimeoutId: number | null = null;
 
-  public constructor({ id, cluster, worker }: BotOptions) {
+  public constructor({ id, cluster, worker }: WorkerOptions) {
     this.id = id;
     this.cluster = cluster;
     this.worker = worker;
 
     this.startTime = Date.now();
-    this.lastUpdateTime = this.startTime;
+    this.lastUsed = this.startTime;
 
     this.setupEventListeners()
-  }
-
-  private idle() {
-    if (this.cluster.options.idleTimeout > 0) {
-      this.idleTimeoutId = setTimeout(() => {
-        this.terminate();
-      }, this.cluster.options.idleTimeout);
-    }
   }
 
   public async handle(task: Task<P, R>) {
@@ -82,24 +74,37 @@ export class Worker<P, R> implements BotOptions {
     if (this.currentTask)
       throw new Error(`Worker ${this.id} is currently executing task ${this.currentTask.id} and cannot process multiple tasks simultaneously`);
 
-    this.currentTask = task;
-    this.lastUpdateTime = Date.now();
+    return new Promise((resolve, reject) => {
+      this.currentTask = {
+        ...task,
 
-    const message: BotMessage<P> = {
-      id: task.id,
-      type: MessageType.TASK,
-      payload: task.payload
-    }
+        resolve: (value: R) => {
+          task.resolve(value);
+          resolve(value);
+        },
+        reject: (error: any) => {
+          task.reject(error);
+          reject(error);
+        }
+      };
+      this.lastUsed = Date.now();
 
-    try {
-      if (task.transferables && task.transferables.length > 0) {
-        this.worker.postMessage(message, task.transferables);
-      } else {
-        this.worker.postMessage(message);
+      const message: WorkerMessage<P, R> = {
+        id: task.id,
+        type: MessageType.TASK,
+        payload: task.payload
       }
-    } catch (error) {
-      this.onError(error instanceof Error ? error : new Error(String(error)))
-    }
+
+      try {
+        if (task.transferables && task.transferables.length > 0) {
+          this.worker.postMessage(message, task.transferables);
+        } else {
+          this.worker.postMessage(message);
+        }
+      } catch (error) {
+        this.onError(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
   }
 
   public async terminate(): Promise<void> {
@@ -107,22 +112,22 @@ export class Worker<P, R> implements BotOptions {
 
     this.worker.postMessage({ type: MessageType.TERMINATE });
     this.worker.terminate();
+    this.clearIdleTimeout()
     this.closed = true;
 
     if (this.currentTask) {
       this.currentTask.reject(new Error(`Worker ${this.id} has been terminated. Task ${this.currentTask.id} has been cancelled.`));
       this.currentTask = null;
     }
-
   }
 
   public async ping(): Promise<boolean> {
     return new Promise(resolve => {
       const timeoutId = setTimeout(() => resolve(false), 1000);
 
-      const listener = (e: MessageEvent) => {
+      const listener = (e: MessageEvent<WorkerMessage<P, R>>) => {
         try {
-          const message = e.data as BotMessage<R>;
+          const message = e.data as WorkerMessage<P, R>;
           if (message.type === MessageType.PONG) {
             clearTimeout(timeoutId);
             this.worker.removeEventListener('message', listener);
@@ -150,7 +155,23 @@ export class Worker<P, R> implements BotOptions {
 
   public getIdleTime(): number {
     const now = Date.now();
-    return this.isBusy() ? 0 : now - this.lastUpdateTime;
+    return this.isBusy() ? 0 : now - this.lastUsed;
+  }
+
+  private setupIdleTimeout() {
+    this.clearIdleTimeout()
+    if (this.cluster.options.idleTimeout > 0) {
+      this.idleTimeoutId = setTimeout(() => {
+        this.terminate();
+      }, this.cluster.options.idleTimeout);
+    }
+  }
+
+  private clearIdleTimeout() {
+    if (this.idleTimeoutId) {
+      clearTimeout(this.idleTimeoutId);
+      this.idleTimeoutId = null;
+    }
   }
 
   private setupEventListeners(): void {
@@ -159,19 +180,17 @@ export class Worker<P, R> implements BotOptions {
     this.worker.addEventListener("messageerror", this.onMessageError.bind(this))
   }
 
-  private onMessage(e: MessageEvent) {
-    const message = e.data as BotMessage<R>;
-
+  private onMessage(e: MessageEvent<WorkerMessage<P, R>>) {
+    const message = e.data as WorkerMessage<P, R>;
+    console.log(e)
     if (!this.currentTask && message.type !== MessageType.PONG) {
       return
     }
 
-    console.log(message)
-
     switch (message.type) {
       case MessageType.COMPLETED:
         if (this.currentTask && message.id === this.currentTask.id) {
-          this.completedTask(message.payload);
+          this.completedTask(message.payload as R);
         }
         break;
       case MessageType.ERROR:
@@ -219,7 +238,7 @@ export class Worker<P, R> implements BotOptions {
     const task = this.currentTask;
 
     this.currentTask = undefined;
-    this.lastUpdateTime = Date.now();
+    this.lastUsed = Date.now();
     task.resolve(result)
   }
 
@@ -229,7 +248,7 @@ export class Worker<P, R> implements BotOptions {
     const task = this.currentTask;
 
     this.currentTask = undefined;
-    this.lastUpdateTime = Date.now();
+    this.lastUsed = Date.now();
 
     task.reject(error)
   }
