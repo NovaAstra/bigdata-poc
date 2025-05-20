@@ -1,5 +1,5 @@
 import { type ScriptURL, type Task, TaskOptions } from "./types"
-import { Bot } from "./bot";
+import { Worker } from "./worker";
 import { Queue } from "./queue";
 import { nanoid } from "nanoid";
 
@@ -12,13 +12,14 @@ export interface ClusterOptions {
   timeout: number;
   retryLimit: number;
   retryDelay: number;
+  idleTimeout: number;
+  transferables: Transferable[];
 }
 
 export type ClusterOptionsArgument = Partial<ClusterOptions>;
 
 export const isWorkerSupported = () =>
-  typeof window !== 'undefined'
-  && typeof Worker !== 'undefined';
+  typeof window !== 'undefined' && typeof Worker !== 'undefined';
 
 export const createScriptURL = (scriptURL: ScriptURL): URL => {
   if (typeof scriptURL === 'string')
@@ -36,6 +37,88 @@ export const createScriptURL = (scriptURL: ScriptURL): URL => {
   throw new TypeError(`Invalid script format. Expected string, URL or function, but got: ${typeof scriptURL}`);
 }
 
+export class WorkerPool<K, V> {
+  private pool: Map<K, V[]> = new Map<K, V[]>();
+
+  public get size(): number {
+    return Array.from(this.pool.values())
+      .reduce((total, resource) => total + resource.length, 0);
+  }
+
+  public push(key: K, resources: V): void {
+    if (!this.pool.has(key)) {
+      this.pool.set(key, []);
+    }
+    this.pool.get(key)!.push(resources);
+  }
+
+  public shift(key: K): V | undefined {
+    const workers = this.pool.get(key);
+
+    if (workers && workers.length > 0) {
+      return workers.shift();
+    }
+    return undefined
+  }
+
+  public remove(resource: V): boolean {
+    for (const [key, resources] of this.pool.entries()) {
+      const index = resources.indexOf(resource);
+      if (index !== -1) {
+        resources.splice(index, 1);
+        if (resources.length === 0) {
+          this.pool.delete(key);
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public clear(): void {
+    this.pool.clear();
+  }
+
+  public has(resource: V): boolean {
+    for (const resources of this.pool.values()) {
+      if (resources.includes(resource)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public map<U>(
+    callback: (resource: V, key: K, pool: WorkerPool<K, V>) => U,
+    thisArg?: any
+  ): U[] {
+    const result: U[] = [];
+    this.forEach((resource, key) => {
+      result.push(callback.call(thisArg, resource, key, this));
+    });
+    return result;
+  }
+
+  public forEach(
+    callback: (resource: V, key: K, pool: WorkerPool<K, V>) => void,
+    thisArg?: any
+  ): void {
+    for (const [key, resources] of this.pool.entries()) {
+      for (const resource of resources) {
+        callback.call(thisArg, resource, key, this);
+      }
+    }
+  }
+
+  public toArray(): V[] {
+    const result: V[] = [];
+    for (const resources of this.pool.values()) {
+      result.push(...resources);
+    }
+    return result;
+  }
+}
+
 const CHECK_FOR_WORK_INTERVAL = 100;
 const WORK_CALL_INTERVAL_LIMIT = 10;
 
@@ -46,26 +129,28 @@ const DEFAULT_OPTIONS: ClusterOptions = {
   debug: false,
   workerOptions: {},
   timeout: 30 * 1000,
+  idleTimeout: 3 * 1000,
   retryLimit: 0,
   retryDelay: 0,
+  transferables: []
 }
 
 export class Cluster<P = any, R = any> {
-  public static async launch(options: ClusterOptionsArgument) {
+  public static async launch(options: ClusterOptionsArgument = {}) {
     const cluster = new Cluster(options);
     await cluster.bootstrap();
     return cluster;
   }
 
-  private readonly options: ClusterOptions;
-
-  private initialized: boolean = false;
-  private allTargetCount: number = 0
+  public readonly options: ClusterOptions;
   private readonly jobQueue: Queue<any, any> = new Queue()
 
-  private agents: Bot<P, R>[] = [];
-  private agentsAvail: Bot<P, R>[] = [];
-  private workersBusy: Bot<P, R>[] = [];
+  private allTargetCount: number = 0
+
+  private readonly workerPool: WorkerPool<URL, Worker<P, R>> = new WorkerPool<URL, Worker<P, R>>();
+  private readonly workerAvailPool: WorkerPool<URL, Worker<P, R>> = new WorkerPool<URL, Worker<P, R>>();
+  private readonly workerBusyPool: WorkerPool<URL, Worker<P, R>> = new WorkerPool<URL, Worker<P, R>>();
+
   private workersStarting: number = 0;
 
   private nextWorkCall: number = 0;
@@ -77,7 +162,7 @@ export class Cluster<P = any, R = any> {
 
   private closed: boolean = false;
 
-  public constructor(options: ClusterOptionsArgument) {
+  public constructor(options: ClusterOptionsArgument = {}) {
     this.options = {
       ...DEFAULT_OPTIONS,
       ...options,
@@ -85,18 +170,18 @@ export class Cluster<P = any, R = any> {
   }
 
   public async queue<P, R>(payload: P, options: TaskOptions = {}) {
-    if (!this.initialized) await this.bootstrap()
-
     return new Promise<R>((resolve, reject) => {
+      const scriptURL = createScriptURL(options.scriptURL || this.options.scriptURL);
+
       const task: Task<P, R> = {
         id: options?.id ?? nanoid(),
         payload,
         retries: 0,
-        scriptURL: createScriptURL(options.scriptURL || this.options.scriptURL),
+        scriptURL,
         resolve,
         reject,
-        transferables: options?.transferables,
-        timeout: options?.timeout ?? this.options.timeout,
+        transferables: options.transferables || this.options.transferables,
+        timeout: options.timeout ?? this.options.timeout,
       }
 
       this.jobQueue.push(task);
@@ -106,9 +191,17 @@ export class Cluster<P = any, R = any> {
     })
   }
 
-  private async bootstrap() {
-    if (this.initialized) return;
+  public async close() {
+    this.closed = true;
 
+    clearInterval(this.checkForWorkInterval);
+    clearTimeout(this.workCallTimeout);
+
+    // close workers
+    await Promise.all(this.workerPool.map(worker => worker.terminate()));
+  }
+
+  private async bootstrap() {
     if (!isWorkerSupported()) {
       throw new Error('Web Workers are not supported in this environment.');
     }
@@ -118,8 +211,6 @@ export class Cluster<P = any, R = any> {
     }
 
     this.checkForWorkInterval = setInterval(() => this.work(), CHECK_FOR_WORK_INTERVAL);
-
-    this.initialized = true
   }
 
   private async work() {
@@ -135,7 +226,7 @@ export class Cluster<P = any, R = any> {
       const timeUntilNextWorkCall = this.nextWorkCall - now;
       this.workCallTimeout = setTimeout(
         () => {
-          this.workCallTimeout = undefined;
+          this.workCallTimeout = null;
           this.doWork();
         },
         timeUntilNextWorkCall,
@@ -144,58 +235,69 @@ export class Cluster<P = any, R = any> {
   }
 
   private async doWork() {
-    if (this.jobQueue.size === 0) {
-      if (this.workersBusy.length === 0) {
-      }
-      return;
-    }
-
-    if (this.agentsAvail.length === 0) {
-      if (this.allowedToStartWorker()) {
-        await this.launchWorker();
-        this.work()
+    if (this.jobQueue.size === 0) { // no jobs available
+      if (this.workerBusyPool.size === 0) {
       }
       return;
     }
 
     const job = this.jobQueue.shift();
     if (job === undefined) {
-      // skip, there are items in the queue but they are all delayed
+      // skip, there are items in the jobQueue but they are all delayed
       return;
     }
 
-    const worker = this.agentsAvail.shift()!;
-    this.workersBusy.push(worker);
+
+    if (this.workerAvailPool.size === 0) { // no workers available
+      if (this.allowedToStartWorker()) {
+        await this.launchWorker(job);
+        this.jobQueue.unshift(job)
+        console.log(this.workCallTimeout)
+        this.work()
+      }
+      return;
+    }
+
+
+    const worker = this.workerAvailPool.shift(job.scriptURL)!;
+    this.workerBusyPool.push(job.scriptURL, worker);
+
+    if (this.workerAvailPool.size !== 0 || this.allowedToStartWorker()) {
+      this.work()
+    }
+
+
 
     const result = await worker.handle(job);
 
-    // add worker to available agents again
-    const workerIndex = this.workersBusy.indexOf(worker);
-    this.workersBusy.splice(workerIndex, 1);
+    // add worker to available bots again
+    this.workerBusyPool.remove(worker);
 
-    this.agentsAvail.push(worker);
+    this.workerAvailPool.push(job.scriptURL, worker);
 
     this.work()
   }
 
-  private async launchWorker() {
+  private async launchWorker(job: Task<any, any>) {
     this.workersStarting += 1
     this.lastLaunchedWorkerTime = Date.now();
 
-    const bot = new Bot<P, R>({
+    const worker = new Worker<P, R>({
       id: nanoid(),
       cluster: this,
-      worker: new Worker(this.options.scriptURL as string)
+      worker: new window.Worker(job.scriptURL,)
     });
 
-    this.agentsAvail.push(bot);
-    this.agents.push(bot);
+    this.workerAvailPool.push(job.scriptURL, worker);
+    this.workerPool.push(job.scriptURL, worker);
+
+    console.log(this.workerPool)
 
     this.workersStarting -= 1;
   }
 
   private allowedToStartWorker() {
-    const workerCount = this.agents.length + this.workersStarting;
+    const workerCount = this.workerPool.size + this.workersStarting;
     return (
       this.options.maxConcurrency === 0
       || workerCount < this.options.maxConcurrency)

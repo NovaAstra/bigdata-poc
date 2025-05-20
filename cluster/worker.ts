@@ -26,10 +26,12 @@ export const timeoutExecute = async <T>(millis: number, promise: Promise<T>): Pr
   return result;
 }
 
+export type WebWorker = globalThis.Worker
+
 export interface BotOptions {
   id: string;
   cluster: Cluster;
-  worker: Worker;
+  worker: WebWorker;
 }
 
 export interface BotMessage<P> {
@@ -39,10 +41,10 @@ export interface BotMessage<P> {
   error?: Error
 }
 
-export class Bot<P, R> implements BotOptions {
+export class Worker<P, R> implements BotOptions {
   public readonly id: string;
 
-  public readonly worker: Worker;
+  public readonly worker: WebWorker;
   public readonly cluster: Cluster;
 
   public closed: boolean = false
@@ -51,6 +53,8 @@ export class Bot<P, R> implements BotOptions {
 
   private startTime: number;
   private lastUpdateTime: number;
+
+  private idleTimeoutId: number;
 
   public constructor({ id, cluster, worker }: BotOptions) {
     this.id = id;
@@ -61,6 +65,14 @@ export class Bot<P, R> implements BotOptions {
     this.lastUpdateTime = this.startTime;
 
     this.setupEventListeners()
+  }
+
+  private idle() {
+    if (this.cluster.options.idleTimeout > 0) {
+      this.idleTimeoutId = setTimeout(() => {
+        this.terminate();
+      }, this.cluster.options.idleTimeout);
+    }
   }
 
   public async handle(task: Task<P, R>) {
@@ -101,6 +113,7 @@ export class Bot<P, R> implements BotOptions {
       this.currentTask.reject(new Error(`Worker ${this.id} has been terminated. Task ${this.currentTask.id} has been cancelled.`));
       this.currentTask = null;
     }
+
   }
 
   public async ping(): Promise<boolean> {
@@ -152,6 +165,8 @@ export class Bot<P, R> implements BotOptions {
     if (!this.currentTask && message.type !== MessageType.PONG) {
       return
     }
+
+    console.log(message)
 
     switch (message.type) {
       case MessageType.COMPLETED:
@@ -205,7 +220,6 @@ export class Bot<P, R> implements BotOptions {
 
     this.currentTask = undefined;
     this.lastUpdateTime = Date.now();
-
     task.resolve(result)
   }
 

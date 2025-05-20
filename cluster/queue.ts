@@ -15,6 +15,10 @@ export class Queue<P, R> {
     return this.list.shift();
   }
 
+  public unshift(...items: Task<P, R>[]): void {
+    this.list.unshift(...items)
+  }
+
   public remove(id: string) {
     const index = this.list.findIndex(t => t.id === id);
     if (index !== -1) {

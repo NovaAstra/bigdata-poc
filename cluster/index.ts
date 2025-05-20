@@ -1,6 +1,6 @@
 export type * from "./types";
 
-export * from "./bot";
+export * from "./worker";
 export * from "./queue";
 export * from "./enums";
 export * from "./logger";
