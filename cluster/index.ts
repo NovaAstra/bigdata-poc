@@ -1,7 +1,7 @@
 export type * from "./types";
 
-export * from "./worker";
-export * from "./queue";
+export * from "./Worker";
+export * from "./Queue";
 export * from "./enums";
-export * from "./logger";
-export * from "./cluster";
+export * from "./Logger";
+export * from "./Cluster";

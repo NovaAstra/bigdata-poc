@@ -1,5 +1,5 @@
 import { type Task } from "./types";
-import { type Cluster } from "./cluster";
+import { type Cluster } from "./Cluster";
 import { MessageType } from "./enums";
 
 export const timeoutExecute = async <T>(millis: number, promise: Promise<T>): Promise<T> => {

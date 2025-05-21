@@ -1,6 +1,6 @@
 import { type ScriptURL, type Task, TaskOptions } from "./types"
-import { Worker } from "./worker";
-import { Queue } from "./queue";
+import { Worker } from "./Worker";
+import { Queue } from "./Queue";
 import { nanoid } from "nanoid";
 import { MessageType } from "./enums";
 
