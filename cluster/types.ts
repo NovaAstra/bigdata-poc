@@ -8,8 +8,8 @@ export interface Job<P, R> {
   retries: number;
   scriptURL: URL;
   abortController?: AbortController;
-  resolve: (result: R) => void;
-  reject: (error: Error) => void;
+  resolve?: (result: R) => void;
+  reject?: (error: Error) => void;
   transferables?: Transferable[];
   timeout?: number;
   onProgress?: (progress: number) => void;

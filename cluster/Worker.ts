@@ -65,20 +65,28 @@ export class Worker<P, R> implements WorkerOptions {
     if (this.isBusy())
       throw new Error(`Worker ${this.id} is already processing task ${this.job!.id}`);
 
-    this.job = job;
-    this.setState(WorkerState.BUSY);
+    return new Promise<R>((resolve, reject) => {
+      let origalResolve = job.resolve
+      let origalReject = job.reject
+      job.resolve = (result: R) => {
+        resolve(result)
+        origalResolve(result)
+      };
+      job.reject = (error: Error) => {
+        reject(error);
+        origalReject(error)
+      };
+      this.job = job;
 
-    const message: WorkerMessage<P, R> = {
-      id: this.job.id,
-      type: MessageType.TASK,
-      payload: job.payload
-    }
+      this.setState(WorkerState.BUSY);
 
-    this.postMessage(message, job.transferables);
+      const message: WorkerMessage<P, R> = {
+        id: this.job.id,
+        type: MessageType.TASK,
+        payload: job.payload
+      }
 
-    return new Promise((resolve, reject) => {
-      job.resolve = resolve;
-      job.reject = reject;
+      this.postMessage(message, job.transferables);
     });
   }
 

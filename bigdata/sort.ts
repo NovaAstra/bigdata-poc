@@ -119,16 +119,21 @@ export class Heap<T> {
   }
 }
 
+export const defaultCompare = <T>(a: T, b: T): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
 
 
 export class MinHeap<T> extends Heap<T> {
-  constructor(comparator: Comparator<T> = (a, b) => (a > b ? 1 : a < b ? -1 : 0)) {
+  constructor(comparator: Comparator<T> = defaultCompare) {
     super(comparator);
   }
 }
 
 export class MaxHeap<T> extends Heap<T> {
-  constructor(comparator: Comparator<T> = (a, b) => (a < b ? 1 : a > b ? -1 : 0)) {
+  constructor(comparator: Comparator<T> = (a, b) => -defaultCompare(a, b)) {
     super(comparator);
   }
 }
@@ -139,11 +144,6 @@ type MergeItem<T> = {
   index: number;
 };
 
-export const defaultCompare = <T>(a: T, b: T): number => {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
 
 
 export function sort<T>(
@@ -155,8 +155,6 @@ export function sort<T>(
 ) {
   const order = options.order ?? 'asc';
   const compare = options.comparator ?? defaultCompare;
-
-  const operators = order === 'asc' ? 'unshift' : 'push';
 
   const heap = new MinHeap<MergeItem<T>>((a, b) => compare(a.value, b.value));
   const result: T[] = [];
@@ -173,7 +171,7 @@ export function sort<T>(
 
   while (heap.length > 0) {
     const { value, id, index } = heap.poll();
-    result[operators](value);
+    result.push(value);
 
     if (index + 1 < arrays[id].length) {
       heap.push({
@@ -184,5 +182,5 @@ export function sort<T>(
     }
   }
 
-  return result;
+  return order === 'asc' ? result : result.reverse();
 }

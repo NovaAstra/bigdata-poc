@@ -39,8 +39,8 @@ export const createScriptCode = <P, R>(
 
       self.onmessage = async function(ev) {
         try {
-          const result = await Promise.resolve(callback(ev.data));
-
+          const result = await Promise.resolve(callback(ev.data.payload, ev.data));
+          
           self.postMessage({
             type: MessageType.COMPLETED,
             payload: result,
@@ -84,7 +84,7 @@ const WORK_CALL_INTERVAL_LIMIT = 10;
 
 const DEFAULT_OPTIONS: ClusterOptions = {
   scriptURL: 'worker.js',
-  maxConcurrency: 4,
+  maxConcurrency: 5,
   workerCreationDelay: 0,
   debug: false,
   workerOptions: {},
@@ -232,11 +232,11 @@ export class Cluster<P = any, R = any> {
       // skip, there are items in the queue but they are all delayed
       return;
     }
-
+    
     if (this.workersAvail.size(job.scriptURL) === 0) { // no workers available
       if (this.workersAvail.length >= this.options.maxConcurrency) {
         const idleWorker = await this.workersAvail.removeLongestIdle()
-        if (idleWorker) this.workers.remove(idleWorker)
+        if (idleWorker) await this.workers.remove(idleWorker)
       }
 
       if (this.allowedToStartWorker()) {
@@ -253,7 +253,7 @@ export class Cluster<P = any, R = any> {
       // we can execute more work in parallel
       this.work()
     }
-
+    
     const result = await worker.handle(job);
 
     this.waitForOneResolvers.forEach(resolve => resolve(result));
@@ -287,7 +287,7 @@ export class Cluster<P = any, R = any> {
 
   private allowedToStartWorker() {
     const workerCount = this.workers.length + this.workersStarting;
-
+    
     return (
       this.options.maxConcurrency === 0
       || workerCount < this.options.maxConcurrency)
