@@ -1,29 +1,13 @@
-import { Cluster } from "./cluster";
+import { sort } from "./bigdata/sort"
 
-async function bootstrap() {
-  const cluster = await Cluster.launch();
+const arrays = [
+  [1, 4, 7],
+  [2, 5, 8],
+  [3, 6, 9],
+];
 
-  const a1 = await cluster.queue(30, {
-    scriptURL: (data) => {
-      return data
-    }
-  })
-  const a2 = await cluster.queue(30, {
-    scriptURL: (data) => {
-      return data
-    }
-  })
-  const a3 = await cluster.queue(30, {
-    scriptURL: (data) => {
-      return data
-    }
-  })
-  const a4 = await cluster.queue(30, {
-    scriptURL: (data) => {
-      return data
-    }
-  })
-  console.log(a1,a2,a3,a4)
-}
+const result = sort(arrays, { order: 'asc' });
 
-bootstrap()
+const result1 = sort(arrays, { order: 'desc' });
+
+console.log(result, result1)

@@ -1,136 +1,169 @@
-class Heap {
-  heap: any[] = [];
-  #_comparator
+export type Comparator<T> = (a: T, b: T) => number;
 
-  constructor(comparator) {
-    this.#_comparator = comparator;
-  }
+export class Heap<T> {
+  private heap: T[] = [];
 
-  get sizes() {
+  public constructor(private readonly comparator: Comparator<T>) { }
+
+  public get length(): number {
     return this.heap.length
   }
 
-  peak() {
-    this.#_validate();
+  public peak(): T {
+    this.validate();
     return this.heap[0]
   }
 
-  poll() {
-    this.#_validate()
+  public poll(): T {
+    this.validate()
 
-    const min = this.heap.shift();
-    if (this.sizes > 1) {
-      this.heap.unshift(this.heap.pop()!);
-      this.#_heapifyDown();
+    const result = this.heap[0];
+    const last = this.heap.pop()!;
+
+    if (this.length > 0) {
+      this.heap[0] = last;
+      this.heapifyDown();
     }
 
-    return min;
+    return result;
   }
 
-  push(node) {
-    this.heap.push(node)
+  public push(node: T): this {
+    this.heap.push(node);
+    this.heapifyUp();
+    return this;
+  }
 
-    if (this.sizes > 1) {
-      this.#_heapifyUp()
+  public toArray(): T[] {
+    return [...this.heap];
+  }
+
+  private heapifyUp(): void {
+    let index = this.length - 1;
+
+    while (
+      this.hasParent(index) &&
+      this.comparator(this.heap[index], this.getParent(index)) < 0
+    ) {
+      const parentIdx = this.getParentIndex(index);
+      this.swap(index, parentIdx);
+      index = parentIdx;
     }
   }
 
-  #_heapifyUp() {
-    let index = this.sizes - 1
-
-    while (this.#_hasParent(index) && this.#_comparator(this.#_getParent(index), this.heap[index])) {
-      this.#_swap(index, this.#_getParentIndex(index))
-      index = this.#_getParentIndex(index)
-    }
-  }
-
-  #_heapifyDown() {
+  private heapifyDown(): void {
     let index = 0
 
-    while (this.#_hasLeftChild(index)) {
-      let smallestChildIndex = this.#_getLeftChildIndex(index);
+    while (this.hasLeftChild(index)) {
+      let smallestChildIndex = this.getLeftChildIndex(index);
+
       if (
-        this.#_hasRightChild(index)
-        && this.#_comparator(this.#_getLeftChild(index), this.#_getRightChild(index))
+        this.hasRightChild(index)
+        && this.comparator(this.heap[this.getRightChildIndex(index)], this.heap[smallestChildIndex]) < 0
       ) {
-        smallestChildIndex = this.#_getRightChildIndex(index);
+        smallestChildIndex = this.getRightChildIndex(index);
       }
 
-      if (this.#_comparator(this.heap[smallestChildIndex], this.heap[index])) {
-        break;
-      }
+      if (this.comparator(this.heap[index], this.heap[smallestChildIndex]) <= 0) break;
 
-      this.#_swap(index, smallestChildIndex);
+      this.swap(index, smallestChildIndex);
       index = smallestChildIndex;
     }
   }
 
-  #_getParent(index) {
-    return this.heap[this.#_getParentIndex(index)]
+  private getParent(index: number): T {
+    return this.heap[this.getParentIndex(index)]
   }
 
-  #_hasParent(index) {
-    const parentIndex = this.#_getParentIndex(index);
-    return parentIndex < this.sizes && parentIndex >= 0;
+  private getLeftChild(index: number) {
+    return this.heap[this.getLeftChildIndex(index)];
   }
 
-  #_getParentIndex(childIndex) {
-    return Math.floor((childIndex - 1) / 2);
+  private getRightChild(index: number) {
+    return this.heap[this.getRightChildIndex(index)];
   }
 
-  #_getLeftChildIndex(parentIndex) {
-    return (2 * parentIndex) + 1;
+  private getParentIndex(index: number): number {
+    return Math.floor((index - 1) / 2);
   }
 
-  #_hasLeftChild(index) {
-    return this.#_getLeftChildIndex(index) < this.sizes
+
+  private getLeftChildIndex(index: number): number {
+    return 2 * index + 1;
   }
 
-  #_getLeftChild(index) {
-    return this.heap[this.#_getLeftChildIndex(index)];
+  private getRightChildIndex(index: number): number {
+    return 2 * index + 2;
   }
 
-  #_getRightChildIndex(parentIndex) {
-    return (2 * parentIndex) + 2;
+  private hasParent(index: number): boolean {
+    return this.getParentIndex(index) >= 0;
   }
 
-  #_hasRightChild(index) {
-    return this.#_getRightChildIndex(index) < this.sizes
+  private hasLeftChild(index: number): boolean {
+    return this.getLeftChildIndex(index) < this.length;
   }
 
-  #_getRightChild(index) {
-    return this.heap[this.#_getRightChildIndex(index)];
+  private hasRightChild(index: number): boolean {
+    return this.getRightChildIndex(index) < this.length;
   }
 
-  #_validate() {
-    if (this.sizes === 0) {
+  private validate() {
+    if (this.length === 0) {
       throw new Error('Invalid Operation. Heap is Empty');
     }
   }
 
-  #_swap(indexA, indexB) {
-    [this.heap[indexA], this.heap[indexB]] = [this.heap[indexB], this.heap[indexA]];
-  }
-
-  #_print() {
-    console.log('Printing Items as Array: ', this.heap);
+  private swap(i: number, j: number): void {
+    [this.heap[i], this.heap[j]] = [this.heap[j], this.heap[i]];
   }
 }
 
-class MinHeap extends Heap {
-  constructor(comparator = (a, b) => a > b) {
+
+
+export class MinHeap<T> extends Heap<T> {
+  constructor(comparator: Comparator<T> = (a, b) => (a > b ? 1 : a < b ? -1 : 0)) {
     super(comparator);
   }
 }
 
-export function sort(arrays: any[] = [], comparator = (a, b) => a > b) {
-  const minHeap = new MinHeap((a, b) => comparator(a.value, b.value));
+export class MaxHeap<T> extends Heap<T> {
+  constructor(comparator: Comparator<T> = (a, b) => (a < b ? 1 : a > b ? -1 : 0)) {
+    super(comparator);
+  }
+}
 
-  const result: any[] = []
+type MergeItem<T> = {
+  value: T;
+  id: number;
+  index: number;
+};
+
+export const defaultCompare = <T>(a: T, b: T): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+
+export function sort<T>(
+  arrays: T[][] = [],
+  options: {
+    comparator?: Comparator<T>;
+    order?: 'asc' | 'desc';
+  } = {}
+) {
+  const order = options.order ?? 'asc';
+  const compare = options.comparator ?? defaultCompare;
+
+  const operators = order === 'asc' ? 'unshift' : 'push';
+
+  const heap = new MinHeap<MergeItem<T>>((a, b) => compare(a.value, b.value));
+  const result: T[] = [];
 
   for (let id = 0; id < arrays.length; id++) {
     if (arrays[id].length > 0) {
-      minHeap.push({
+      heap.push({
         value: arrays[id][0],
         id,
         index: 0,
@@ -138,13 +171,12 @@ export function sort(arrays: any[] = [], comparator = (a, b) => a > b) {
     }
   }
 
-
-  while (minHeap.sizes > 0) {
-    const { value, id, index } = minHeap.poll();
-    result.push(value);
+  while (heap.length > 0) {
+    const { value, id, index } = heap.poll();
+    result[operators](value);
 
     if (index + 1 < arrays[id].length) {
-      minHeap.push({
+      heap.push({
         value: arrays[id][index + 1],
         id,
         index: index + 1

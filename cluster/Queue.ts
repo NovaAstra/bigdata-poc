@@ -1,8 +1,8 @@
-import { type Task } from "./types"
+import { type Job } from "./types"
 
 export class Queue<P, R> {
-  private list: Task<P, R>[] = [];
-  private readonly idMap: Map<string, Task<P, R>> = new Map();
+  private list: Job<P, R>[] = [];
+  private readonly idMap: Map<string, Job<P, R>> = new Map();
 
   public get size(): number {
     return this.list.length;
@@ -12,26 +12,24 @@ export class Queue<P, R> {
     return this.size === 0
   }
 
-  public push(...items: Task<P, R>[]): void {
+  public push(...items: Job<P, R>[]): void {
     for (const item of items) {
       this.idMap.set(item.id, item);
     }
     this.list.push(...items);
   }
 
-  public shift(): Task<P, R> | undefined {
+  public shift(): Job<P, R> | undefined {
     const item = this.list.shift();
-    if (item) {
-      this.idMap.delete(item.id);
-    }
+    item && this.idMap.delete(item.id);
     return item;
   }
 
-  public peek(): Task<P, R> | undefined {
+  public peek(): Job<P, R> | undefined {
     return this.list[0]
   }
 
-  public unshift(...items: Task<P, R>[]): void {
+  public unshift(...items: Job<P, R>[]): void {
     for (const item of items) {
       this.idMap.set(item.id, item);
     }
@@ -51,7 +49,7 @@ export class Queue<P, R> {
     return false;
   }
 
-  public find(id: string): Task<P, R> | undefined {
+  public find(id: string): Job<P, R> | undefined {
     return this.idMap.get(id);
   }
   public clear() {
@@ -59,7 +57,20 @@ export class Queue<P, R> {
     this.idMap.clear();
   }
 
-  public toArray(): Task<P, R>[] {
+  public toArray(): Job<P, R>[] {
     return [...this.list];
+  }
+
+  [Symbol.iterator](): Iterator<Job<P, R>> {
+    let pointer = 0;
+    const list = this.list;
+
+    return {
+      next(): IteratorResult<Job<P, R>> {
+        return pointer < list.length
+          ? { value: list[pointer++], done: false }
+          : { value: null, done: true };
+      }
+    };
   }
 }

@@ -1,30 +1,16 @@
-import { type Task } from "./types";
+import { type Job } from "./types";
 import { type Cluster } from "./Cluster";
 import { MessageType } from "./enums";
 
 export const timeoutExecute = async <T>(millis: number, promise: Promise<T>): Promise<T> => {
-  let timeout: number | undefined;
-
-  const result = await Promise.race([
-    (async () => {
-      await new Promise((resolve) => {
-        timeout = setTimeout(resolve, millis);
-      });
-      throw new Error(`Timeout hit: ${millis}`);
-    })(),
-    (async () => {
-      try {
-        return await promise;
-      } catch (error: any) {
-        // Cancel timeout in error case
-        clearTimeout(timeout);
-        throw error;
-      }
-    })(),
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timeout hit: ${millis}`)), millis);
+      promise.finally(() => clearTimeout(timer));
+    }),
   ]);
-  clearTimeout(timeout); // is there a better way?
-  return result;
-}
+};
 
 export type WebWorker = globalThis.Worker
 
@@ -35,11 +21,18 @@ export interface WorkerOptions {
 }
 
 export interface WorkerMessage<P, R> {
-  id: string;
+  id?: string;
   type: MessageType;
   payload?: P | R;
   error?: Error;
   progress?: number;
+}
+
+export enum WorkerState {
+  IDLE,
+  BUSY,
+  TERMINATING,
+  TERMINATED
 }
 
 export class Worker<P, R> implements WorkerOptions {
@@ -47,154 +40,161 @@ export class Worker<P, R> implements WorkerOptions {
   public readonly worker: WebWorker;
   public readonly cluster: Cluster;
 
-  public closed: boolean = false
+  private state: WorkerState = WorkerState.IDLE;
 
-  private currentTask: Task<P, R> | null = null;
+  private job: Job<P, R> | null = null;
 
-  private startTime: number;
-  private lastUsed: number;
+  private startTime: number = Date.now();
+  private lastUsed: number = this.startTime;
 
   private idleTimeoutId: number | null = null;
+  private abortController: AbortController = new AbortController();
 
   public constructor({ id, cluster, worker }: WorkerOptions) {
     this.id = id;
     this.cluster = cluster;
     this.worker = worker;
 
-    this.startTime = Date.now();
-    this.lastUsed = this.startTime;
-
     this.setupEventListeners()
   }
 
-  public async handle(task: Task<P, R>) {
-    if (this.closed)
-      throw new Error(`Worker ${this.id} is terminated and cannot process tasks`);
+  public async handle(job: Job<P, R>): Promise<R> {
+    if (this.state >= WorkerState.TERMINATING)
+      throw new Error(`Worker ${this.id} is terminating or terminated`);
 
-    if (this.currentTask)
-      throw new Error(`Worker ${this.id} is currently executing task ${this.currentTask.id} and cannot process multiple tasks simultaneously`);
+    if (this.isBusy())
+      throw new Error(`Worker ${this.id} is already processing task ${this.job!.id}`);
+
+    this.job = job;
+    this.setState(WorkerState.BUSY);
+
+    const message: WorkerMessage<P, R> = {
+      id: this.job.id,
+      type: MessageType.TASK,
+      payload: job.payload
+    }
+
+    this.postMessage(message, job.transferables);
 
     return new Promise((resolve, reject) => {
-      this.currentTask = {
-        ...task,
-
-        resolve: (value: R) => {
-          task.resolve(value);
-          resolve(value);
-        },
-        reject: (error: any) => {
-          task.reject(error);
-          reject(error);
-        }
-      };
-      this.lastUsed = Date.now();
-
-      const message: WorkerMessage<P, R> = {
-        id: task.id,
-        type: MessageType.TASK,
-        payload: task.payload
-      }
-
-      try {
-        if (task.transferables && task.transferables.length > 0) {
-          this.worker.postMessage(message, task.transferables);
-        } else {
-          this.worker.postMessage(message);
-        }
-      } catch (error) {
-        this.onError(error instanceof Error ? error : new Error(String(error)))
-      }
-    })
+      job.resolve = resolve;
+      job.reject = reject;
+    });
   }
 
   public async terminate(): Promise<void> {
-    if (this.closed) return;
+    if (this.state >= WorkerState.TERMINATING) return;
 
-    this.worker.postMessage({ type: MessageType.TERMINATE });
-    this.worker.terminate();
+    this.setState(WorkerState.TERMINATING);
+    this.abortController.abort();
     this.clearIdleTimeout()
-    this.closed = true;
+    this.cleanupEventListeners()
 
-    if (this.currentTask) {
-      this.currentTask.reject(new Error(`Worker ${this.id} has been terminated. Task ${this.currentTask.id} has been cancelled.`));
-      this.currentTask = null;
+    try {
+      this.postMessage({
+        type: MessageType.TERMINATE
+      });
+    } finally {
+      this.worker.terminate();
+      this.setState(WorkerState.TERMINATED);
+
+      if (this.job) {
+        this.job.reject(new Error(`Worker ${this.id} terminated during task ${this.job.id}`));
+        this.job = null;
+      }
     }
   }
 
-  public async ping(): Promise<boolean> {
-    return new Promise(resolve => {
-      const timeoutId = setTimeout(() => resolve(false), 1000);
+  public async ping(timeout = 1000): Promise<boolean> {
+    if (this.state >= WorkerState.TERMINATING) return false;
 
+    return timeoutExecute(timeout, new Promise<boolean>((resolve) => {
       const listener = (e: MessageEvent<WorkerMessage<P, R>>) => {
-        try {
-          const message = e.data as WorkerMessage<P, R>;
-          if (message.type === MessageType.PONG) {
-            clearTimeout(timeoutId);
-            this.worker.removeEventListener('message', listener);
-            resolve(true);
-          }
-        } catch (error) { }
-      }
+        if (e.data?.type === MessageType.PONG) {
+          this.worker.removeEventListener("message", listener);
+          resolve(true);
+        }
+      };
 
-      this.worker.addEventListener("message", listener)
-      this.worker.postMessage({ type: MessageType.PING });
-    })
+      this.abortController.signal.addEventListener("abort", () => {
+        this.worker.removeEventListener("message", listener);
+        resolve(false);
+      });
+
+      this.worker.addEventListener("message", listener);
+      this.postMessage({ type: MessageType.PING });
+    })).catch(() => false);
+  }
+
+  public isAvailable(): boolean {
+    return this.state === WorkerState.IDLE;
   }
 
   public isBusy(): boolean {
-    return this.currentTask !== null;
+    return this.state === WorkerState.BUSY;
   }
 
-  public isClosed(): boolean {
-    return this.closed;
+  public isTerminated(): boolean {
+    return this.state === WorkerState.TERMINATED;
+  }
+
+  public getIdleTime(): number {
+    return this.isBusy() ? 0 : Date.now() - this.lastUsed;
+  }
+
+  public getUptime(): number {
+    return Date.now() - this.startTime;
   }
 
   public getId(): string {
     return this.id
   }
 
-  public getIdleTime(): number {
-    const now = Date.now();
-    return this.isBusy() ? 0 : now - this.lastUsed;
+  private setState(newState: WorkerState) {
+    this.state = newState;
+    this.lastUsed = Date.now();
   }
 
   private setupIdleTimeout() {
-    this.clearIdleTimeout()
-    if (this.cluster.options.idleTimeout > 0) {
-      this.idleTimeoutId = setTimeout(() => {
-        this.terminate();
-      }, this.cluster.options.idleTimeout);
+    this.clearIdleTimeout();
+
+    const timeout = this.cluster.options.idleTimeout;
+    if (timeout > 0) {
+      this.idleTimeoutId = setTimeout(() => this.terminate(), timeout);
     }
   }
 
   private clearIdleTimeout() {
-    if (this.idleTimeoutId) {
+    if (this.idleTimeoutId !== null) {
       clearTimeout(this.idleTimeoutId);
       this.idleTimeoutId = null;
     }
   }
 
   private setupEventListeners(): void {
-    this.worker.addEventListener("message", this.onMessage.bind(this))
-    this.worker.addEventListener("error", this.onError.bind(this))
-    this.worker.addEventListener("messageerror", this.onMessageError.bind(this))
+    this.worker.addEventListener("message", this.onMessage)
+    this.worker.addEventListener("error", this.onError)
+    this.worker.addEventListener("messageerror", this.onMessageError)
   }
 
-  private onMessage(e: MessageEvent<WorkerMessage<P, R>>) {
-    const message = e.data as WorkerMessage<P, R>;
-    console.log(e)
-    if (!this.currentTask && message.type !== MessageType.PONG) {
-      return
-    }
+  private cleanupEventListeners() {
+    this.worker.removeEventListener("message", this.onMessage);
+    this.worker.removeEventListener("error", this.onError);
+    this.worker.removeEventListener("messageerror", this.onMessageError);
+  }
 
+  private onMessage = (e: MessageEvent<WorkerMessage<P, R>>) => {
+    const message = e.data as WorkerMessage<P, R>;
+   
+    if (!this.job && message.type === MessageType.PONG) return
     switch (message.type) {
       case MessageType.COMPLETED:
-        if (this.currentTask && message.id === this.currentTask.id) {
+        if (this.job && message.id === this.job.id) {
           this.completedTask(message.payload as R);
         }
         break;
       case MessageType.ERROR:
-        if (this.currentTask && message.id === this.currentTask.id) {
+        if (this.job && message.id === this.job.id) {
           const error = new Error(message.error?.message || 'unknown error');
           if (message.error?.stack) {
             error.stack = message.error.stack;
@@ -203,13 +203,16 @@ export class Worker<P, R> implements WorkerOptions {
         }
         break;
       case MessageType.PROGRESS:
+        if (this.job && message.id === this.job.id && typeof message.progress === 'number') {
+          this.job.onProgress?.(message.progress);
+        }
         break;
       case MessageType.PONG:
         break;
     }
   }
 
-  private onError(e: ErrorEvent | Error) {
+  private onError = (e: ErrorEvent | Error) => {
     let error: Error;
 
     if (e instanceof ErrorEvent) {
@@ -219,37 +222,53 @@ export class Worker<P, R> implements WorkerOptions {
       error = e;
     }
 
-    if (this.currentTask) {
+    if (this.job) {
       this.failTask(error);
     }
   }
 
-  private onMessageError(_e: MessageEvent) {
+  private onMessageError = (e: MessageEvent<WorkerMessage<P, R>>) => {
     const error = new Error('Worker message could not be parsed');
 
-    if (this.currentTask) {
+    if (this.job) {
       this.failTask(error);
     }
   }
 
-  private completedTask(result: R) {
-    if (!this.currentTask) return;
+  private completedTask(payload: R) {
+    if (!this.job) return;
 
-    const task = this.currentTask;
+    const task = this.job;
 
-    this.currentTask = undefined;
-    this.lastUsed = Date.now();
-    task.resolve(result)
+    this.job = null;
+    this.setState(WorkerState.IDLE);
+    this.setupIdleTimeout();
+
+    task.resolve(payload)
   }
 
   private failTask(error: Error) {
-    if (!this.currentTask) return;
+    if (!this.job) return;
 
-    const task = this.currentTask;
+    const task = this.job;
 
-    this.currentTask = undefined;
+    this.job = null;
+    this.state = WorkerState.IDLE;
     this.lastUsed = Date.now();
+    this.setupIdleTimeout();
 
     task.reject(error)
+  }
+
+  private postMessage(message: WorkerMessage<P, R>, transferables?: Transferable[]): void {
+    try {
+      if (transferables?.length) {
+        this.worker.postMessage(message, transferables);
+      } else {
+        this.worker.postMessage(message);
+      }
+    } catch (error) {
+      this.onError(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 }
