@@ -1,210 +1,309 @@
-// @ts-nocheck
-import { Cluster } from "./cluster"
-
-
-async function bootstrap() {
-  const cluster = Cluster.launch()
-
-  const data: { id: number; score: number; name: string }[] = Array.from(
-    { length: 1_000_000 },
-    (_, i) => ({
-      id: i,
-      score: Math.floor(Math.random() * 1_000_000),
-      name: `name-${i}`,
-    })
-  );
-
-  // console.time("parallel sort (5 chunks)");
-  // const result = await Promise.all([
-  //   cluster.queue(data.slice(0, 200_000), { scriptURL: (data) => data.sort((a, b) => a - b) }),
-  //   cluster.queue(data.slice(200_000, 400_000), { scriptURL: (data) => data.sort((a, b) => a - b) }),
-  //   cluster.queue(data.slice(400_000, 600_000), { scriptURL: (data) => data.sort((a, b) => a - b) }),
-  //   cluster.queue(data.slice(600_000, 800_000), { scriptURL: (data) => data.sort((a, b) => a - b) }),
-  //   cluster.queue(data.slice(800_000, 1_000_000), { scriptURL: (data) => data.sort((a, b) => a - b) }),
-  // ]);
-
-  // const output = await cluster.queue(result, {
-  //   scriptURL: (data) => {
-  //     class Heap {
-  //       constructor(comparator) {
-  //         this.heap = [];
-  //         this.comparator = comparator;
-  //       }
-
-  //       get length() {
-  //         return this.heap.length;
-  //       }
-
-  //       peak() {
-  //         this.validate();
-  //         return this.heap[0];
-  //       }
-
-  //       poll() {
-  //         this.validate();
-
-  //         const result = this.heap[0];
-  //         const last = this.heap.pop();
-
-  //         if (this.length > 0) {
-  //           this.heap[0] = last;
-  //           this.heapifyDown();
-  //         }
-
-  //         return result;
-  //       }
-
-  //       push(node) {
-  //         this.heap.push(node);
-  //         this.heapifyUp();
-  //         return this;
-  //       }
-
-  //       toArray() {
-  //         return [...this.heap];
-  //       }
-
-  //       heapifyUp() {
-  //         let index = this.length - 1;
-
-  //         while (
-  //           this.hasParent(index) &&
-  //           this.comparator(this.heap[index], this.getParent(index)) < 0
-  //         ) {
-  //           const parentIdx = this.getParentIndex(index);
-  //           this.swap(index, parentIdx);
-  //           index = parentIdx;
-  //         }
-  //       }
-
-  //       heapifyDown() {
-  //         let index = 0;
-
-  //         while (this.hasLeftChild(index)) {
-  //           let smallestChildIndex = this.getLeftChildIndex(index);
-
-  //           if (
-  //             this.hasRightChild(index) &&
-  //             this.comparator(this.heap[this.getRightChildIndex(index)], this.heap[smallestChildIndex]) < 0
-  //           ) {
-  //             smallestChildIndex = this.getRightChildIndex(index);
-  //           }
-
-  //           if (this.comparator(this.heap[index], this.heap[smallestChildIndex]) <= 0) break;
-
-  //           this.swap(index, smallestChildIndex);
-  //           index = smallestChildIndex;
-  //         }
-  //       }
-
-  //       getParent(index) {
-  //         return this.heap[this.getParentIndex(index)];
-  //       }
-
-  //       getLeftChild(index) {
-  //         return this.heap[this.getLeftChildIndex(index)];
-  //       }
-
-  //       getRightChild(index) {
-  //         return this.heap[this.getRightChildIndex(index)];
-  //       }
-
-  //       getParentIndex(index) {
-  //         return Math.floor((index - 1) / 2);
-  //       }
-
-  //       getLeftChildIndex(index) {
-  //         return 2 * index + 1;
-  //       }
-
-  //       getRightChildIndex(index) {
-  //         return 2 * index + 2;
-  //       }
-
-  //       hasParent(index) {
-  //         return this.getParentIndex(index) >= 0;
-  //       }
-
-  //       hasLeftChild(index) {
-  //         return this.getLeftChildIndex(index) < this.length;
-  //       }
-
-  //       hasRightChild(index) {
-  //         return this.getRightChildIndex(index) < this.length;
-  //       }
-
-  //       validate() {
-  //         if (this.length === 0) {
-  //           throw new Error('Invalid Operation. Heap is Empty');
-  //         }
-  //       }
-
-  //       swap(i, j) {
-  //         [this.heap[i], this.heap[j]] = [this.heap[j], this.heap[i]];
-  //       }
-  //     }
-
-  //     const defaultCompare = (a, b) => {
-  //       if (a < b) return -1;
-  //       if (a > b) return 1;
-  //       return 0;
-  //     };
-
-  //     class MinHeap extends Heap {
-  //       constructor(comparator = defaultCompare) {
-  //         super(comparator);
-  //       }
-  //     }
-
-  //     class MaxHeap extends Heap {
-  //       constructor(comparator = (a, b) => -defaultCompare(a, b)) {
-  //         super(comparator);
-  //       }
-  //     }
-
-  //     function sort(arrays = [], options = {}) {
-  //       const order = options.order ?? 'asc';
-  //       const compare = options.comparator ?? defaultCompare;
-
-  //       const heap = new MinHeap((a, b) => compare(a.value, b.value));
-  //       const result = [];
-
-  //       for (let id = 0; id < arrays.length; id++) {
-  //         if (arrays[id].length > 0) {
-  //           heap.push({
-  //             value: arrays[id][0],
-  //             id,
-  //             index: 0,
-  //           });
-  //         }
-  //       }
-
-  //       while (heap.length > 0) {
-  //         const { value, id, index } = heap.poll();
-  //         result.push(value);
-
-  //         if (index + 1 < arrays[id].length) {
-  //           heap.push({
-  //             value: arrays[id][index + 1],
-  //             id,
-  //             index: index + 1,
-  //           });
-  //         }
-  //       }
-
-  //       return order === 'asc' ? result : result.reverse();
-  //     }
-
-  //     return sort(data, { order: 'asc' })
-  //   }
-  // })
-  // console.timeEnd("parallel sort (5 chunks)");
-  // console.log(output)
-
-  const clone1 = [...data];
-  console.time("native sort (single-thread)");
-  clone1.sort((a, b) => a.score - b.score);
-  console.timeEnd("native sort (single-thread)");
+export class Node<P = unknown> {
+  public constructor(
+    public readonly id: string,
+    public readonly metadata?: P
+  ) { }
 }
 
-bootstrap()
+export enum Dirty {
+  None = 0,
+  Topo = 1 << 0,
+  Cycle = 1 << 1,
+  Reach = 1 << 2,
+}
+
+export enum Direction {
+  In,
+  Out
+}
+
+export type Comparator<T> = (a: T, b: T) => number;
+
+export interface Edge<T> {
+  source: T,
+  target: T,
+  weight?: number;
+}
+
+export class DAG<P, T extends Node<P>> {
+  private static readonly EMPTY_SET = new Set<string>();
+
+  private readonly nodes: Map<string, T> = new Map();
+
+  private readonly outEdges: Map<string, Set<string>> = new Map();
+  private readonly inEdges: Map<string, Set<string>> = new Map();
+
+  private readonly inDegree: Map<string, number> = new Map();
+
+  private readonly outReachs: Map<string, Set<string>> = new Map();
+  private readonly inReachs: Map<string, Set<string>> = new Map();
+
+  private readonly subgraphs: Map<string, DAG<P, T>> = new Map();
+
+  private readonly edgeWeights: Map<string, Map<string, number>> = new Map();
+
+  private orders: T[] = [];
+
+  private cycle: boolean;
+
+  private dirty: Dirty = Dirty.None;
+
+  public get size(): number {
+    return this.nodes.size;
+  }
+
+  public addNodes(...nodes: (string | T)[]): this {
+    for (const node of nodes) {
+      this.addNode(node);
+    }
+    return this;
+  }
+
+  public addNode(node: string | T): this {
+    const n = this.createNode(node);
+    if (!this.nodes.has(n.id)) {
+      this.nodes.set(n.id, n);
+
+      this.outEdges.set(n.id, new Set());
+      this.inEdges.set(n.id, new Set());
+
+      this.inDegree.set(n.id, 0);
+
+      this.markDirty(Dirty.Topo | Dirty.Cycle | Dirty.Reach);
+    }
+    return this;
+  }
+
+  public addEdges(...edges: Edge<string | T>[]): this {
+    for (const { source, target } of edges) {
+      this.addEdge(source, target);
+    }
+    return this;
+  }
+
+  public addEdge(source: string | T, target: string | T, weight: number = 1): this {
+    const srcId = this.resolveId(source);
+    const tgtId = this.resolveId(target);
+    this.addNodes(srcId, tgtId);
+
+    if (this.outEdges.get(srcId)!.has(tgtId)) return this;
+
+    if (this.isReachable(tgtId, srcId)) {
+      throw new Error(`Adding edge ${srcId} -> ${tgtId} would create a cycle`);
+    }
+
+    this.outEdges.get(srcId)!.add(tgtId);
+    this.inEdges.get(tgtId)!.add(srcId);
+
+    this.inDegree.set(tgtId, (this.inDegree.get(tgtId) ?? 0) + 1);
+
+    if (!this.edgeWeights.has(srcId)) this.edgeWeights.set(srcId, new Map());
+    this.edgeWeights.get(srcId)!.set(tgtId, weight);
+
+    this.markDirty(Dirty.Topo | Dirty.Cycle | Dirty.Reach);
+    return this;
+  }
+
+  public removeNodes(...nodes: (string | T)[]): this {
+    for (const node of nodes) {
+      this.removeNode(node);
+    }
+    return this;
+  }
+
+  public removeNode(node: string | T): this {
+    const id = this.resolveId(node);
+    if (!this.nodes.has(id)) return this;
+
+    for (const source of this.outEdges.get(id) ?? []) {
+      this.inEdges.get(source)?.delete(id);
+      this.inDegree.set(id, (this.inDegree.get(id) ?? 1) - 1);
+    }
+
+    for (const target of this.inEdges.get(id) ?? []) {
+      this.outEdges.get(target)?.delete(id);
+      this.inDegree.set(target, this.inDegree.get(target)! - 1);
+      this.edgeWeights.get(target)?.delete(id);
+    }
+
+    this.inEdges.delete(id);
+    this.outEdges.delete(id);
+    this.inDegree.delete(id);
+    this.nodes.delete(id);
+    this.edgeWeights.delete(id);
+
+    this.markDirty(Dirty.Topo | Dirty.Cycle | Dirty.Reach);
+
+    this.inReachs.clear();
+    this.outReachs.clear();
+    return this
+  }
+
+  public removeEdges(...edges: Edge<string | T>[]): this {
+    for (const { source, target } of edges) {
+      this.removeEdge(source, target);
+    }
+    return this
+  }
+
+  public removeEdge(source: string | T, target: string | T): this {
+    const srcId = this.resolveId(source);
+    const tgtId = this.resolveId(target);
+
+    if (this.outEdges.get(srcId)?.delete(tgtId)) {
+      this.inEdges.get(tgtId)?.delete(srcId);
+      this.inDegree.set(tgtId, this.inDegree.get(tgtId)! - 1);
+      this.edgeWeights.get(srcId)?.delete(tgtId);
+      this.markDirty(Dirty.Topo | Dirty.Cycle | Dirty.Reach);
+    }
+    return this;
+  }
+
+  public getNode(node: string | T): T {
+    return this.nodes.get(this.resolveId(node))!;
+  }
+
+  public hasNode(node: string | T): boolean {
+    return this.nodes.has(this.resolveId(node));
+  }
+
+  public getOutEdges(node: string | T): ReadonlySet<string> {
+    return this.outEdges.get(this.resolveId(node)) ?? DAG.EMPTY_SET;
+  }
+
+  public getInEdges(node: string | T): ReadonlySet<string> {
+    return this.inEdges.get(this.resolveId(node)) ?? DAG.EMPTY_SET;
+  }
+
+  public getEdges(node: string | T, direction: Direction = Direction.Out) {
+    return direction === Direction.In ? this.getInEdges(node) : this.getOutEdges(node)
+  }
+
+  public isReachable(source: string | T, target: string | T): boolean {
+    const srcId = this.resolveId(source);
+    const tgtId = this.resolveId(target);
+
+    if (srcId === tgtId) return true;
+
+    return this.getReachs(srcId, Direction.Out).has(tgtId);
+  }
+
+  public getReachs(id: string, direction: Direction = Direction.Out): Set<string> {
+    const reachs = this.resolveReachs(direction);
+    if (!reachs.has(id)) {
+      const visited = this.traverse(id, direction);
+      reachs.set(id, visited);
+    }
+    return reachs.get(id)!;
+  }
+
+  protected order(node: string | T, direction: Direction = Direction.Out) {
+
+  }
+
+  protected subgraph(
+    node: string | T,
+    direction: Direction = Direction.Out
+  ) {
+    const rootId = this.resolveId(node);
+    if (!this.hasNode(rootId)) return new DAG();
+
+    const key = this.createKey(rootId, direction);
+    if (this.subgraphs.has(key)) return this.subgraphs.get(key)!;
+
+    const reachs = this.getReachs(rootId, direction)
+    const subdag = new DAG<P, T>();
+
+    for (const nodeId of reachs) {
+      subdag.addNode(this.nodes.get(nodeId)!);
+    }
+
+    for (const nodeId of reachs) {
+      for (const targetId of this.outEdges.get(nodeId) ?? []) {
+        if (reachs.has(targetId)) {
+          subdag.addEdge(nodeId, targetId);
+        }
+      }
+    }
+
+    this.subgraphs.set(key, subdag);
+    return subdag;
+  }
+
+  protected traverse(
+    node: string | T,
+    direction: Direction = Direction.Out,
+    callback?: (id: string) => boolean | void
+  ): Set<string> {
+    const rootId = this.resolveId(node);
+
+    const visited = new Set<string>();
+    const stack = [rootId];
+
+    const edges = this.resolveEdges(direction);
+
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+
+      if (!this.hasNode(id)) continue
+      if (visited.has(id)) continue
+      visited.add(id)
+
+      if (typeof callback === 'function') {
+        const stop = callback(id)
+        if (stop === false) break
+      }
+
+      for (const next of edges.get(id) ?? []) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    return visited;
+  }
+
+  private createNode(input: string | T): T {
+    return typeof input === 'string' ? new Node(input) as T : input
+  }
+
+  private createKey(id: string, direction: Direction) {
+    return `${direction}:${id}`;
+  }
+
+  private resolveId(input: string | T): string {
+    return typeof input === 'string' ? input : input.id;
+  }
+
+  private resolveEdges(direction: Direction): Map<string, Set<string>> {
+    return direction === Direction.In ? this.inEdges : this.outEdges
+  }
+
+  private resolveReachs(direction: Direction): Map<string, Set<string>> {
+    if (this.isDirty(Dirty.Reach)) {
+      this.inReachs.clear();
+      this.outReachs.clear();
+      this.clearDirty(Dirty.Reach);
+    }
+    return direction === Direction.Out ? this.outReachs : this.inReachs;
+  }
+
+  private markDirty(flags: Dirty) {
+    this.dirty |= flags;
+
+    if (flags & Dirty.Reach) {
+      this.inReachs.clear();
+      this.outReachs.clear();
+      this.subgraphs.clear();
+    }
+  }
+
+  private isDirty(flag: Dirty): boolean {
+    return (this.dirty & flag) !== 0;
+  }
+
+  private clearDirty(flag: Dirty) {
+    this.dirty &= ~flag;
+  }
+}
