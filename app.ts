@@ -42,7 +42,7 @@ export class DAG<P, T extends Node<P>> {
 
   private readonly edgeWeights: Map<string, Map<string, number>> = new Map();
 
-  private orders: T[] = [];
+  private readonly orders: Map<string, T[]> = new Map();
 
   private cycle: boolean;
 
@@ -53,9 +53,7 @@ export class DAG<P, T extends Node<P>> {
   }
 
   public addNodes(...nodes: (string | T)[]): this {
-    for (const node of nodes) {
-      this.addNode(node);
-    }
+    for (const node of nodes) this.addNode(node);
     return this;
   }
 
@@ -133,16 +131,13 @@ export class DAG<P, T extends Node<P>> {
     this.edgeWeights.delete(id);
 
     this.markDirty(Dirty.Topo | Dirty.Cycle | Dirty.Reach);
-
     this.inReachs.clear();
     this.outReachs.clear();
     return this
   }
 
   public removeEdges(...edges: Edge<string | T>[]): this {
-    for (const { source, target } of edges) {
-      this.removeEdge(source, target);
-    }
+    for (const { source, target } of edges) this.removeEdge(source, target);
     return this
   }
 
@@ -182,9 +177,7 @@ export class DAG<P, T extends Node<P>> {
   public isReachable(source: string | T, target: string | T): boolean {
     const srcId = this.resolveId(source);
     const tgtId = this.resolveId(target);
-
     if (srcId === tgtId) return true;
-
     return this.getReachs(srcId, Direction.Out).has(tgtId);
   }
 
@@ -198,7 +191,39 @@ export class DAG<P, T extends Node<P>> {
   }
 
   protected order(node: string | T, direction: Direction = Direction.Out) {
+    const rootId = this.resolveId(node);
+    const key = this.createKey(rootId, direction);
+    if (this.orders.has(key)) {
+      return this.orders.get(key)!;
+    }
 
+    const subdag = this.subgraph(node, direction);
+    const inDegree = new Map(subdag.inDegree);
+    const stack: string[] = [];
+
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) stack.push(id);
+    }
+
+    const result: T[] = [];
+    while (stack.length > 0) {
+      const id = stack.shift()!;
+      const node = subdag.getNode(id);
+      result.push(node);
+
+      for (const neighbor of subdag.getOutEdges(id)) {
+        const deg = inDegree.get(neighbor)! - 1;
+        inDegree.set(neighbor, deg);
+        if (deg === 0) stack.push(neighbor);
+      }
+    }
+
+    if (result.length !== subdag.size) {
+      throw new Error("Cycle detected in subgraph");
+    }
+
+    this.orders.set(key, result);
+    return result;
   }
 
   protected subgraph(
@@ -221,7 +246,8 @@ export class DAG<P, T extends Node<P>> {
     for (const nodeId of reachs) {
       for (const targetId of this.outEdges.get(nodeId) ?? []) {
         if (reachs.has(targetId)) {
-          subdag.addEdge(nodeId, targetId);
+          const weight = this.edgeWeights.get(nodeId)?.get(targetId) ?? 1;
+          subdag.addEdge(nodeId, targetId, weight);
         }
       }
     }
@@ -296,6 +322,10 @@ export class DAG<P, T extends Node<P>> {
       this.inReachs.clear();
       this.outReachs.clear();
       this.subgraphs.clear();
+    }
+
+    if (flags & Dirty.Topo) {
+      this.orders.clear();
     }
   }
 
