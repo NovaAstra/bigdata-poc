@@ -242,27 +242,12 @@ export class DAG<P, T extends Node<P>> {
     const key = this.createKey(rootId, direction);
     if (this.subgraphs.has(key)) return this.subgraphs.get(key)!;
 
-    const reachs = this.getReachs(rootId, direction)
-    const subdag = new DAG<P, T>();
-
-    for (const nodeId of reachs) {
-      subdag.addNode(this.nodes.get(nodeId)!);
-    }
-
-    for (const nodeId of reachs) {
-      for (const targetId of this.outEdges.get(nodeId) ?? []) {
-        if (reachs.has(targetId)) {
-          const weight = this.edgeWeights.get(nodeId)?.get(targetId) ?? 1;
-          subdag.addEdge(nodeId, targetId, weight);
-        }
-      }
-    }
-
+    const subdag = this.slice(rootId, direction);
     this.subgraphs.set(key, subdag);
     return subdag;
   }
 
-  protected traverse(
+  private traverse(
     node: string | T,
     direction: Direction = Direction.Out,
     callback?: (id: string) => boolean | void
@@ -293,6 +278,23 @@ export class DAG<P, T extends Node<P>> {
       }
     }
     return visited;
+  }
+
+  private slice(id: string, direction: Direction): DAG<P, T> {
+    const subdag = new DAG<P, T>();
+    const edges = this.resolveEdges(direction);
+
+    this.traverse(id, direction, (id) => {
+      const node = this.nodes.get(id)!;
+      subdag.addNode(node);
+
+      for (const neighbor of edges.get(id) ?? []) {
+        const weight = this.edgeWeights.get(id)?.get(neighbor) ?? 1;
+        subdag.addEdge(id, neighbor, weight);
+      }
+    });
+
+    return subdag;
   }
 
   private toNode(input: string | T): T {
