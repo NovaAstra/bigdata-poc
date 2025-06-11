@@ -26,7 +26,7 @@ export interface Edge<T> {
 }
 
 export class DAG<P, T extends Node<P>> {
-  private static readonly EMPTY_SET = new Set<string>();
+  private static readonly EMPTY_SET = Object.freeze(new Set()) as Set<string>;
 
   private readonly nodes: Map<string, T> = new Map();
 
@@ -58,7 +58,7 @@ export class DAG<P, T extends Node<P>> {
   }
 
   public addNode(node: string | T): this {
-    const n = this.createNode(node);
+    const n = this.toNode(node);
     if (!this.nodes.has(n.id)) {
       this.nodes.set(n.id, n);
 
@@ -73,8 +73,8 @@ export class DAG<P, T extends Node<P>> {
   }
 
   public addEdges(...edges: Edge<string | T>[]): this {
-    for (const { source, target } of edges) {
-      this.addEdge(source, target);
+    for (const { source, target, weight = 1 } of edges) {
+      this.addEdge(source, target, weight);
     }
     return this;
   }
@@ -114,14 +114,14 @@ export class DAG<P, T extends Node<P>> {
     if (!this.nodes.has(id)) return this;
 
     for (const source of this.outEdges.get(id) ?? []) {
-      this.inEdges.get(source)?.delete(id);
-      this.inDegree.set(id, (this.inDegree.get(id) ?? 1) - 1);
+      this.outEdges.get(source)!.delete(id);
+      this.edgeWeights.get(source)?.delete(id);
     }
 
     for (const target of this.inEdges.get(id) ?? []) {
-      this.outEdges.get(target)?.delete(id);
-      this.inDegree.set(target, this.inDegree.get(target)! - 1);
-      this.edgeWeights.get(target)?.delete(id);
+      this.inEdges.get(target)?.delete(id);
+      this.inDegree.set(target, (this.inDegree.get(target) ?? 1) - 1);
+      this.edgeWeights.get(id)?.delete(target);
     }
 
     this.inEdges.delete(id);
@@ -131,8 +131,6 @@ export class DAG<P, T extends Node<P>> {
     this.edgeWeights.delete(id);
 
     this.markDirty(Dirty.Topo | Dirty.Cycle | Dirty.Reach);
-    this.inReachs.clear();
-    this.outReachs.clear();
     return this
   }
 
@@ -190,22 +188,31 @@ export class DAG<P, T extends Node<P>> {
     return reachs.get(id)!;
   }
 
-  protected order(node: string | T, direction: Direction = Direction.Out) {
+  public order(node: string | T, direction: Direction = Direction.Out, comparator?: Comparator<T>) {
     const rootId = this.resolveId(node);
     const key = this.createKey(rootId, direction);
-    if (this.orders.has(key)) {
-      return this.orders.get(key)!;
-    }
+    if (this.orders.has(key)) return this.orders.get(key)!;
 
     const subdag = this.subgraph(node, direction);
     const inDegree = new Map(subdag.inDegree);
-    const stack: string[] = [];
 
+    const stack: string[] = [];
     for (const [id, deg] of inDegree) {
       if (deg === 0) stack.push(id);
     }
 
     const result: T[] = [];
+
+    const sortStack = () => {
+      if (comparator) {
+        stack.sort((a, b) =>
+          comparator(subdag.getNode(a), subdag.getNode(b))
+        );
+      }
+    };
+
+    sortStack();
+
     while (stack.length > 0) {
       const id = stack.shift()!;
       const node = subdag.getNode(id);
@@ -216,6 +223,8 @@ export class DAG<P, T extends Node<P>> {
         inDegree.set(neighbor, deg);
         if (deg === 0) stack.push(neighbor);
       }
+
+      sortStack();
     }
 
     if (result.length !== subdag.size) {
@@ -226,12 +235,9 @@ export class DAG<P, T extends Node<P>> {
     return result;
   }
 
-  protected subgraph(
-    node: string | T,
-    direction: Direction = Direction.Out
-  ) {
+  public subgraph(node: string | T, direction: Direction = Direction.Out) {
     const rootId = this.resolveId(node);
-    if (!this.hasNode(rootId)) return new DAG();
+    if (!this.hasNode(rootId)) return new DAG<P, T>();
 
     const key = this.createKey(rootId, direction);
     if (this.subgraphs.has(key)) return this.subgraphs.get(key)!;
@@ -271,9 +277,9 @@ export class DAG<P, T extends Node<P>> {
     while (stack.length > 0) {
       const id = stack.pop()!;
 
-      if (!this.hasNode(id)) continue
-      if (visited.has(id)) continue
-      visited.add(id)
+      if (!this.hasNode(id) || visited.has(id)) continue;
+
+      visited.add(id);
 
       if (typeof callback === 'function') {
         const stop = callback(id)
@@ -282,7 +288,6 @@ export class DAG<P, T extends Node<P>> {
 
       for (const next of edges.get(id) ?? []) {
         if (!visited.has(next)) {
-          visited.add(next);
           stack.push(next);
         }
       }
@@ -290,7 +295,7 @@ export class DAG<P, T extends Node<P>> {
     return visited;
   }
 
-  private createNode(input: string | T): T {
+  private toNode(input: string | T): T {
     return typeof input === 'string' ? new Node(input) as T : input
   }
 
